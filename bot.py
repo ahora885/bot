@@ -3,11 +3,12 @@ from telebot import types
 import sqlite3
 import threading
 import os
-from flask import Flask, jsonify, request, render_template_string
+from flask import Flask, jsonify, render_template_string
 from openai import OpenAI
+import random
 
-TOKEN = os.environ.get("TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+TOKEN = os.getenv("TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not TOKEN:
     raise ValueError("TOKEN missing")
@@ -18,13 +19,14 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 ADMIN_ID = 1183522329
 
-# ================= CLOUD DB =================
-conn = sqlite3.connect("cloud.db", check_same_thread=False)
+# ================= DB =================
+conn = sqlite3.connect("final.db", check_same_thread=False)
 cur = conn.cursor()
 
 cur.execute("""CREATE TABLE IF NOT EXISTS users (
 user_id INTEGER PRIMARY KEY,
-coins INTEGER DEFAULT 20
+coins INTEGER DEFAULT 10,
+style TEXT DEFAULT 'neutral'
 )""")
 
 cur.execute("""CREATE TABLE IF NOT EXISTS products (
@@ -34,58 +36,70 @@ title TEXT,
 price INTEGER
 )""")
 
-cur.execute("""CREATE TABLE IF NOT EXISTS orders (
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-buyer_id INTEGER,
-product_id INTEGER
-)""")
-
 cur.execute("""CREATE TABLE IF NOT EXISTS support (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 user_id INTEGER,
 message TEXT
 )""")
 
+cur.execute("""CREATE TABLE IF NOT EXISTS orders (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+buyer_id INTEGER,
+product_id INTEGER
+)""")
+
 conn.commit()
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-def ai_response(text):
-
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are CLOUD AI inside a SaaS marketplace bot."
-            },
-            {"role": "user", "content": text}
-        ]
-    )
-
-    return res.choices[0].message.content
-
-
 def get_user(uid):
     cur.execute("SELECT coins FROM users WHERE user_id=?", (uid,))
     r = cur.fetchone()
 
     if not r:
-        cur.execute("INSERT INTO users (user_id,coins) VALUES (?,20)", (uid,))
+        style = random.choice(["friendly", "robotic", "funny", "serious"])
+        cur.execute("INSERT INTO users (user_id,coins,style) VALUES (?,?,?)",
+                    (uid,10,style))
         conn.commit()
-        return 20
+        return 10
 
     return r[0]
 
 
-def update_coins(uid, value):
-    cur.execute("UPDATE users SET coins=? WHERE user_id=?", (value, uid))
-    conn.commit()
+def get_style(uid):
+    cur.execute("SELECT style FROM users WHERE user_id=?", (uid,))
+    r = cur.fetchone()
+    return r[0] if r else "neutral"
+
+
+def ai_reply(uid, text):
+
+    style = get_style(uid)
+
+    system_prompt = f"""
+You are a UNIQUE AI assistant.
+
+User style: {style}
+
+Rules:
+- Never repeat same answer
+- Change tone based on style
+- Be creative
+- Act like different personality per user
+"""
+
+    res = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text}
+        ]
+    )
+
+    return res.choices[0].message.content
     def menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("💰 Coins", "🛍 Store")
     kb.row("🛒 Buy", "🏪 Sell")
-    kb.row("🤖 AI Chat", "📞 Support")
-    kb.row("☁️ Cloud API")
+    kb.row("📞 Support", "🤖 AI")
+    kb.row("👑 Admin")
     return kb
 
 
@@ -93,7 +107,7 @@ def update_coins(uid, value):
 @bot.message_handler(commands=["start"])
 def start(m):
     get_user(m.from_user.id)
-    bot.send_message(m.chat.id, "☁️ CLOUD SYSTEM ONLINE", reply_markup=menu())
+    bot.send_message(m.chat.id, "🚀 ULTRA AI SYSTEM ONLINE", reply_markup=menu())
 
 
 # ================= COINS =================
@@ -109,7 +123,7 @@ def store(m):
     cur.execute("SELECT * FROM products")
     rows = cur.fetchall()
 
-    text = "🛍 CLOUD MARKET:\n\n"
+    text = "🛍 MARKET:\n\n"
     for r in rows:
         text += f"{r[0]} | {r[2]} | {r[3]}💰\n"
 
@@ -122,11 +136,16 @@ def sell(m):
     msg = bot.send_message(m.chat.id, "Send: title price")
     bot.register_next_step_handler(msg, save_product)
 
+
 def save_product(m):
     try:
         t, p = m.text.split()
-        cur.execute("INSERT INTO products (seller_id,title,price) VALUES (?,?,?)",
-                    (m.from_user.id, t, int(p)))
+
+        cur.execute(
+            "INSERT INTO products (seller_id,title,price) VALUES (?,?,?)",
+            (m.from_user.id, t, int(p))
+        )
+
         conn.commit()
         bot.send_message(m.chat.id, "✅ Added")
     except:
@@ -140,7 +159,7 @@ def buy(m):
     cur.execute("SELECT * FROM products")
     rows = cur.fetchall()
 
-    text = "🛒 PRODUCTS:\n\n"
+    text = "🛒 ITEMS:\n\n"
     for r in rows:
         text += f"{r[0]} | {r[2]} = {r[3]}💰\n"
 
@@ -164,10 +183,12 @@ def process_buy(m):
         if coins < price:
             return bot.send_message(m.chat.id, "❌ Not enough coins")
 
-        update_coins(m.from_user.id, coins - price)
+        cur.execute("UPDATE users SET coins=? WHERE user_id=?",
+                    (coins - price, m.from_user.id))
 
         cur.execute("INSERT INTO orders (buyer_id,product_id) VALUES (?,?)",
                     (m.from_user.id, pid))
+
         conn.commit()
 
         bot.send_message(m.chat.id, "✅ Purchased")
@@ -182,26 +203,50 @@ def support(m):
     msg = bot.send_message(m.chat.id, "Write issue:")
     bot.register_next_step_handler(msg, save_support)
 
+
 def save_support(m):
-    cur.execute("INSERT INTO support (user_id,message) VALUES (?,?)",
-                (m.from_user.id, m.text))
+    cur.execute(
+        "INSERT INTO support (user_id,message) VALUES (?,?)",
+        (m.from_user.id, m.text)
+    )
     conn.commit()
-    bot.send_message(m.chat.id, "📨 Sent to cloud admin")
+
+    bot.send_message(m.chat.id, "📨 Sent to admin")
 
 
-# ================= AI CHAT =================
-@bot.message_handler(func=lambda m: m.text == "🤖 AI Chat")
+# ================= AI (PERSONAL CHAT) =================
+@bot.message_handler(func=lambda m: m.text == "🤖 AI")
 def ai(m):
-    msg = bot.send_message(m.chat.id, "Ask AI:")
+    msg = bot.send_message(m.chat.id, "Ask me anything:")
     bot.register_next_step_handler(msg, ai_handler)
 
+
 def ai_handler(m):
-    bot.send_message(m.chat.id, ai_response(m.text))
+    reply = ai_reply(m.from_user.id, m.text)
+    bot.send_message(m.chat.id, reply)
+
+
+# ================= ADMIN =================
+@bot.message_handler(func=lambda m: m.text == "👑 Admin")
+def admin(m):
+
+    if m.from_user.id != ADMIN_ID:
+        return
+
+    cur.execute("SELECT * FROM support")
+    rows = cur.fetchall()
+
+    text = "👑 SUPPORT LIST:\n\n"
+    for r in rows:
+        text += f"{r}\n"
+
+    bot.send_message(m.chat.id, text)
 
 
 # ================= CLOUD API =================
-@app.route("/api/cloud")
-def cloud_api():
+@app.route("/api")
+def api():
+
     cur.execute("SELECT COUNT(*) FROM users")
     u = cur.fetchone()[0]
 
@@ -212,27 +257,22 @@ def cloud_api():
     o = cur.fetchone()[0]
 
     return jsonify({
-        "cloud_status": "online",
+        "status": "online",
         "users": u,
         "products": p,
         "orders": o
     })
 
 
-# ================= WEB DASHBOARD =================
 @app.route("/")
 def home():
     return render_template_string("""
-    <html>
-    <body style="background:#0b0b0b;color:white;font-family:Arial">
-        <h1>☁️ GOD++ ULTRA CLOUD</h1>
-        <p>System is running...</p>
-    </body>
-    </html>
+    <h1>🚀 ULTRA AI PLATFORM ONLINE</h1>
+    <p>System Running...</p>
     """)
 
 
-# ================= RUN CLOUD =================
+# ================= RUN =================
 def run_bot():
     bot.infinity_polling()
 
