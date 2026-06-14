@@ -8,6 +8,12 @@ from flask import Flask, render_template_string
 
 # ================= CONFIG =================
 TOKEN = os.getenv("TOKEN")
+
+if not TOKEN:
+    raise ValueError(
+        "متغیر TOKEN پیدا نشد! توکن ربات را در بخش Variables گیت‌هاب/سرویس خودت با نام TOKEN اضافه کن."
+    )
+
 ADMIN_ID = 1183522329
 
 bot = telebot.TeleBot(TOKEN)
@@ -46,22 +52,26 @@ price INTEGER
 """)
 
 conn.commit()
-
 # ================= CORE USER =================
 def get_user(uid):
     cur.execute("SELECT coins FROM users WHERE user_id=?", (uid,))
     r = cur.fetchone()
 
     if not r:
-        cur.execute("INSERT INTO users (user_id,coins,vip) VALUES (?,3,NULL)", (uid,))
+        cur.execute(
+            "INSERT INTO users (user_id,coins,vip) VALUES (?,3,NULL)",
+            (uid,)
+        )
         conn.commit()
         return 3
 
     return r[0]
 
+
 def update_user(uid, coins):
     cur.execute("UPDATE users SET coins=? WHERE user_id=?", (coins, uid))
     conn.commit()
+
 
 # ================= MENU =================
 def menu():
@@ -71,16 +81,23 @@ def menu():
     kb.row("👨‍💻 Admin", "🌐 Panel")
     return kb
 
+
 # ================= START =================
 @bot.message_handler(commands=["start"])
 def start(m):
     get_user(m.from_user.id)
-    bot.send_message(m.chat.id, "🚀 ALL-IN-ONE SYSTEM READY", reply_markup=menu())
+    bot.send_message(
+        m.chat.id,
+        "🚀 ALL-IN-ONE SYSTEM READY",
+        reply_markup=menu()
+    )
+
 
 # ================= COINS =================
 @bot.message_handler(func=lambda m: m.text == "💰 Coins")
 def coins(m):
     bot.send_message(m.chat.id, f"💰 {get_user(m.from_user.id)}")
+
 
 # ================= STORE =================
 @bot.message_handler(func=lambda m: m.text == "🛍 Store")
@@ -94,6 +111,7 @@ def store(m):
 
     bot.send_message(m.chat.id, text)
 
+
 # ================= SOURCES =================
 @bot.message_handler(func=lambda m: m.text == "📦 Sources")
 def sources(m):
@@ -106,11 +124,13 @@ def sources(m):
 
     bot.send_message(m.chat.id, text)
 
+
 # ================= SELL SYSTEM =================
 @bot.message_handler(func=lambda m: m.text == "🏪 Sell")
 def sell(m):
     msg = bot.send_message(m.chat.id, "Send: title price")
     bot.register_next_step_handler(msg, save)
+
 
 def save(m):
     try:
@@ -127,6 +147,7 @@ def save(m):
     except:
         bot.send_message(m.chat.id, "❌ format: title price")
 
+
 # ================= ADMIN PANEL =================
 @bot.message_handler(func=lambda m: m.text == "👨‍💻 Admin")
 def admin(m):
@@ -141,8 +162,7 @@ def admin(m):
         text += f"{u}\n"
 
     bot.send_message(m.chat.id, text)
-
-# ================= WEB PANEL =================
+    # ================= WEB PANEL =================
 @app.route("/")
 def home():
 
@@ -166,6 +186,7 @@ def home():
     </html>
     """, u=u, p=p, s=s)
 
+
 @app.route("/users")
 def users():
 
@@ -181,14 +202,17 @@ def users():
     </body></html>
     """, users=rows)
 
+
 # ================= RUN BOTH =================
 def run_bot():
     print("BOT RUNNING")
     bot.infinity_polling()
 
+
 def run_web():
     print("WEB RUNNING")
     app.run(host="0.0.0.0", port=5000)
+
 
 threading.Thread(target=run_bot).start()
 threading.Thread(target=run_web).start()
