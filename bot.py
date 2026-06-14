@@ -7,7 +7,7 @@ import os
 from flask import Flask, render_template_string
 
 # ================= CONFIG =================
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.environ.get("TOKEN")
 
 if not TOKEN:
     raise ValueError(
