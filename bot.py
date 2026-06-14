@@ -2,83 +2,90 @@ import telebot
 from telebot import types
 import sqlite3
 import threading
-import datetime
 import os
-from flask import Flask, render_template_string
+from flask import Flask, jsonify, request, render_template_string
+from openai import OpenAI
 
-# ================= CONFIG =================
 TOKEN = os.environ.get("TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 if not TOKEN:
-    raise ValueError(
-        "متغیر TOKEN پیدا نشد! توکن ربات را در بخش Variables گیت‌هاب/سرویس خودت با نام TOKEN اضافه کن."
-    )
-
-ADMIN_ID = 1183522329
+    raise ValueError("TOKEN missing")
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ================= DB =================
-conn = sqlite3.connect("bot.db", check_same_thread=False)
+ADMIN_ID = 1183522329
+
+# ================= CLOUD DB =================
+conn = sqlite3.connect("cloud.db", check_same_thread=False)
 cur = conn.cursor()
 
-# USERS (Wallet + VIP)
-cur.execute("""
-CREATE TABLE IF NOT EXISTS users (
+cur.execute("""CREATE TABLE IF NOT EXISTS users (
 user_id INTEGER PRIMARY KEY,
-coins INTEGER DEFAULT 3,
-vip TEXT
-)
-""")
+coins INTEGER DEFAULT 20
+)""")
 
-# PRODUCTS (Marketplace / Amazon style)
-cur.execute("""
-CREATE TABLE IF NOT EXISTS products (
+cur.execute("""CREATE TABLE IF NOT EXISTS products (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 seller_id INTEGER,
 title TEXT,
 price INTEGER
-)
-""")
+)""")
 
-# SOURCES (Digital store)
-cur.execute("""
-CREATE TABLE IF NOT EXISTS sources (
+cur.execute("""CREATE TABLE IF NOT EXISTS orders (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
-title TEXT,
-price INTEGER
-)
-""")
+buyer_id INTEGER,
+product_id INTEGER
+)""")
+
+cur.execute("""CREATE TABLE IF NOT EXISTS support (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+user_id INTEGER,
+message TEXT
+)""")
 
 conn.commit()
-# ================= CORE USER =================
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+def ai_response(text):
+
+    res = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are CLOUD AI inside a SaaS marketplace bot."
+            },
+            {"role": "user", "content": text}
+        ]
+    )
+
+    return res.choices[0].message.content
+
+
 def get_user(uid):
     cur.execute("SELECT coins FROM users WHERE user_id=?", (uid,))
     r = cur.fetchone()
 
     if not r:
-        cur.execute(
-            "INSERT INTO users (user_id,coins,vip) VALUES (?,3,NULL)",
-            (uid,)
-        )
+        cur.execute("INSERT INTO users (user_id,coins) VALUES (?,20)", (uid,))
         conn.commit()
-        return 3
+        return 20
 
     return r[0]
 
 
-def update_user(uid, coins):
-    cur.execute("UPDATE users SET coins=? WHERE user_id=?", (coins, uid))
+def update_coins(uid, value):
+    cur.execute("UPDATE users SET coins=? WHERE user_id=?", (value, uid))
     conn.commit()
-
-
-# ================= MENU =================
-def menu():
+    def menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("💰 Coins", "🛍 Store")
-    kb.row("📦 Sources", "🏪 Sell")
-    kb.row("👨‍💻 Admin", "🌐 Panel")
+    kb.row("🛒 Buy", "🏪 Sell")
+    kb.row("🤖 AI Chat", "📞 Support")
+    kb.row("☁️ Cloud API")
     return kb
 
 
@@ -86,11 +93,7 @@ def menu():
 @bot.message_handler(commands=["start"])
 def start(m):
     get_user(m.from_user.id)
-    bot.send_message(
-        m.chat.id,
-        "🚀 ALL-IN-ONE SYSTEM READY",
-        reply_markup=menu()
-    )
+    bot.send_message(m.chat.id, "☁️ CLOUD SYSTEM ONLINE", reply_markup=menu())
 
 
 # ================= COINS =================
@@ -102,118 +105,139 @@ def coins(m):
 # ================= STORE =================
 @bot.message_handler(func=lambda m: m.text == "🛍 Store")
 def store(m):
+
     cur.execute("SELECT * FROM products")
     rows = cur.fetchall()
 
-    text = "🛍 MARKETPLACE:\n\n"
+    text = "🛍 CLOUD MARKET:\n\n"
     for r in rows:
-        text += f"ID:{r[0]} | {r[2]} | {r[3]}💰\n"
+        text += f"{r[0]} | {r[2]} | {r[3]}💰\n"
 
     bot.send_message(m.chat.id, text)
 
 
-# ================= SOURCES =================
-@bot.message_handler(func=lambda m: m.text == "📦 Sources")
-def sources(m):
-    cur.execute("SELECT * FROM sources")
-    rows = cur.fetchall()
-
-    text = "📦 SOURCES:\n\n"
-    for r in rows:
-        text += f"ID:{r[0]} | {r[1]} | {r[2]}💰\n"
-
-    bot.send_message(m.chat.id, text)
-
-
-# ================= SELL SYSTEM =================
+# ================= SELL =================
 @bot.message_handler(func=lambda m: m.text == "🏪 Sell")
 def sell(m):
     msg = bot.send_message(m.chat.id, "Send: title price")
-    bot.register_next_step_handler(msg, save)
+    bot.register_next_step_handler(msg, save_product)
 
-
-def save(m):
+def save_product(m):
     try:
-        title, price = m.text.split()
-
-        cur.execute("""
-        INSERT INTO products (seller_id,title,price)
-        VALUES (?,?,?)
-        """, (m.from_user.id, title, int(price)))
-
+        t, p = m.text.split()
+        cur.execute("INSERT INTO products (seller_id,title,price) VALUES (?,?,?)",
+                    (m.from_user.id, t, int(p)))
         conn.commit()
-        bot.send_message(m.chat.id, "✅ Added to marketplace")
-
+        bot.send_message(m.chat.id, "✅ Added")
     except:
         bot.send_message(m.chat.id, "❌ format: title price")
 
 
-# ================= ADMIN PANEL =================
-@bot.message_handler(func=lambda m: m.text == "👨‍💻 Admin")
-def admin(m):
-    if m.from_user.id != ADMIN_ID:
-        return
+# ================= BUY =================
+@bot.message_handler(func=lambda m: m.text == "🛒 Buy")
+def buy(m):
 
-    cur.execute("SELECT * FROM users")
-    users = cur.fetchall()
+    cur.execute("SELECT * FROM products")
+    rows = cur.fetchall()
 
-    text = "👨‍💻 USERS:\n\n"
-    for u in users:
-        text += f"{u}\n"
+    text = "🛒 PRODUCTS:\n\n"
+    for r in rows:
+        text += f"{r[0]} | {r[2]} = {r[3]}💰\n"
 
     bot.send_message(m.chat.id, text)
-    
-    # ================= WEB PANEL =================
-@app.route("/")
-def home():
+    bot.register_next_step_handler(m, process_buy)
 
+
+def process_buy(m):
+    try:
+        pid = int(m.text)
+
+        cur.execute("SELECT price FROM products WHERE id=?", (pid,))
+        item = cur.fetchone()
+
+        if not item:
+            return bot.send_message(m.chat.id, "❌ Not found")
+
+        price = item[0]
+        coins = get_user(m.from_user.id)
+
+        if coins < price:
+            return bot.send_message(m.chat.id, "❌ Not enough coins")
+
+        update_coins(m.from_user.id, coins - price)
+
+        cur.execute("INSERT INTO orders (buyer_id,product_id) VALUES (?,?)",
+                    (m.from_user.id, pid))
+        conn.commit()
+
+        bot.send_message(m.chat.id, "✅ Purchased")
+
+    except:
+        bot.send_message(m.chat.id, "❌ error")
+
+
+# ================= SUPPORT =================
+@bot.message_handler(func=lambda m: m.text == "📞 Support")
+def support(m):
+    msg = bot.send_message(m.chat.id, "Write issue:")
+    bot.register_next_step_handler(msg, save_support)
+
+def save_support(m):
+    cur.execute("INSERT INTO support (user_id,message) VALUES (?,?)",
+                (m.from_user.id, m.text))
+    conn.commit()
+    bot.send_message(m.chat.id, "📨 Sent to cloud admin")
+
+
+# ================= AI CHAT =================
+@bot.message_handler(func=lambda m: m.text == "🤖 AI Chat")
+def ai(m):
+    msg = bot.send_message(m.chat.id, "Ask AI:")
+    bot.register_next_step_handler(msg, ai_handler)
+
+def ai_handler(m):
+    bot.send_message(m.chat.id, ai_response(m.text))
+
+
+# ================= CLOUD API =================
+@app.route("/api/cloud")
+def cloud_api():
     cur.execute("SELECT COUNT(*) FROM users")
     u = cur.fetchone()[0]
 
     cur.execute("SELECT COUNT(*) FROM products")
     p = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM sources")
-    s = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM orders")
+    o = cur.fetchone()[0]
 
+    return jsonify({
+        "cloud_status": "online",
+        "users": u,
+        "products": p,
+        "orders": o
+    })
+
+
+# ================= WEB DASHBOARD =================
+@app.route("/")
+def home():
     return render_template_string("""
     <html>
-    <body style="background:#0f0f0f;color:white;font-family:Arial">
-        <h1>🚀 PRO ALL-IN-ONE DASHBOARD</h1>
-        <p>👤 Users: {{u}}</p>
-        <p>🛍 Products: {{p}}</p>
-        <p>📦 Sources: {{s}}</p>
+    <body style="background:#0b0b0b;color:white;font-family:Arial">
+        <h1>☁️ GOD++ ULTRA CLOUD</h1>
+        <p>System is running...</p>
     </body>
     </html>
-    """, u=u, p=p, s=s)
+    """)
 
 
-@app.route("/users")
-def users():
-
-    cur.execute("SELECT * FROM users")
-    rows = cur.fetchall()
-
-    return render_template_string("""
-    <html><body style="background:#111;color:white">
-    <h2>USERS</h2>
-    {% for u in users %}
-    <p>{{u}}</p>
-    {% endfor %}
-    </body></html>
-    """, users=rows)
-
-
-# ================= RUN BOTH =================
+# ================= RUN CLOUD =================
 def run_bot():
-    print("BOT RUNNING")
     bot.infinity_polling()
 
-
 def run_web():
-    print("WEB RUNNING")
     app.run(host="0.0.0.0", port=5000)
-
 
 threading.Thread(target=run_bot).start()
 threading.Thread(target=run_web).start()
