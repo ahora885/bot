@@ -1,3 +1,5 @@
-pyTelegramBotAPI==4.14.0
-flask==3.0.0
-openai>=1.0.0
+pyTelegramBotAPI
+openai
+numpy
+faiss-cpu
+flask
