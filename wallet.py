@@ -1,6 +1,8 @@
 from aiogram import Router, types
 
-from database import Session, User
+from sqlalchemy import select
+
+from database import AsyncSessionLocal, User
 
 
 router = Router()
@@ -9,23 +11,28 @@ router = Router()
 @router.message(lambda message: message.text == "💰 کیف پول")
 async def wallet_handler(message: types.Message):
 
-    db = Session()
+    async with AsyncSessionLocal() as session:
 
-    user = db.query(User).filter(
-        User.telegram_id == message.from_user.id
-    ).first()
-
-
-    if not user:
-        await message.answer(
-            "❌ ابتدا ربات را با /start شروع کنید."
+        result = await session.execute(
+            select(User).where(
+                User.telegram_id == message.from_user.id
+            )
         )
-        db.close()
-        return
+
+        user = result.scalar_one_or_none()
 
 
-    await message.answer(
-        f"""
+        if not user:
+
+            await message.answer(
+                "❌ ابتدا ربات را با /start شروع کنید."
+            )
+
+            return
+
+
+        await message.answer(
+            f"""
 💰 کیف پول شما
 
 💵 موجودی:
@@ -34,10 +41,7 @@ async def wallet_handler(message: types.Message):
 📦 تعداد کانفیگ خریداری شده:
 {user.configs}
 
-🧾 وضعیت:
-فعال
+🎁 هدیه ورود:
+{"دریافت شده" if user.welcome_bonus else "دریافت نشده"}
 """
-    )
-
-
-    db.close()
+        )
