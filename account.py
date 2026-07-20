@@ -1,6 +1,8 @@
 from aiogram import Router, types
 
-from database import Session, User
+from sqlalchemy import select
+
+from database import AsyncSessionLocal, User
 
 
 router = Router()
@@ -9,30 +11,35 @@ router = Router()
 @router.message(lambda message: message.text == "👤 اطلاعات حساب")
 async def account_handler(message: types.Message):
 
-    db = Session()
+    async with AsyncSessionLocal() as session:
 
-    user = db.query(User).filter(
-        User.telegram_id == message.from_user.id
-    ).first()
-
-
-    if not user:
-        await message.answer(
-            "❌ ابتدا ربات را با /start شروع کنید."
+        result = await session.execute(
+            select(User).where(
+                User.telegram_id == message.from_user.id
+            )
         )
-        db.close()
-        return
+
+        user = result.scalar_one_or_none()
 
 
-    await message.answer(
-        f"""
+        if not user:
+
+            await message.answer(
+                "❌ ابتدا ربات را با /start شروع کنید."
+            )
+
+            return
+
+
+        await message.answer(
+            f"""
 👤 اطلاعات حساب کاربری
 
 🆔 آیدی تلگرام:
 {user.telegram_id}
 
 👤 اسم:
-{user.first_name}
+{user.first_name or "ندارد"}
 
 📛 یوزرنیم:
 @{user.username if user.username else "ندارد"}
@@ -40,13 +47,10 @@ async def account_handler(message: types.Message):
 💰 موجودی کیف پول:
 {user.wallet} تومان
 
-🆓 تعداد تست استفاده شده:
+🆓 تست رایگان:
 {user.free_test_count}/3
 
-📦 تعداد کانفیگ خریداری شده:
+📦 تعداد کانفیگ:
 {user.configs}
 """
-    )
-
-
-    db.close()
+        )
