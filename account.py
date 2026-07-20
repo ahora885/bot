@@ -1,28 +1,52 @@
 from aiogram import Router, types
 
+from database import Session, User
+
+
 router = Router()
 
 
 @router.message(lambda message: message.text == "👤 اطلاعات حساب")
 async def account_handler(message: types.Message):
 
+    db = Session()
+
+    user = db.query(User).filter(
+        User.telegram_id == message.from_user.id
+    ).first()
+
+
+    if not user:
+        await message.answer(
+            "❌ ابتدا ربات را با /start شروع کنید."
+        )
+        db.close()
+        return
+
+
     await message.answer(
         f"""
 👤 اطلاعات حساب کاربری
 
 🆔 آیدی تلگرام:
-{message.from_user.id}
+{user.telegram_id}
 
 👤 اسم:
-{message.from_user.first_name}
+{user.first_name}
 
 📛 یوزرنیم:
-@{message.from_user.username if message.from_user.username else "ندارد"}
+@{user.username if user.username else "ندارد"}
 
-📦 کانفیگ خریداری شده:
-0
+💰 موجودی کیف پول:
+{user.wallet} تومان
 
-🆓 تست باقی مانده:
-3
+🆓 تعداد تست استفاده شده:
+{user.free_test_count}/3
+
+📦 تعداد کانفیگ خریداری شده:
+{user.configs}
 """
     )
+
+
+    db.close()
