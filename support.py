@@ -1,19 +1,52 @@
 from aiogram import Router, types
 
+from config import ADMIN_ID
+
+
 router = Router()
 
 
+
 @router.message(lambda message: message.text == "💬 پشتیبانی")
-async def support_handler(message: types.Message):
+async def support_start(message: types.Message):
 
     await message.answer(
         """
 💬 پشتیبانی
 
-پیام خود را ارسال کنید.
-تیم پشتیبانی در اسرع وقت پاسخ می‌دهد.
+برای ارتباط با پشتیبانی، پیام خود را ارسال کنید.
 
-🆔 شناسه شما:
+پیام شما مستقیم برای مدیریت ارسال می‌شود.
 """
-        + str(message.from_user.id)
+    )
+
+
+
+@router.message()
+async def send_to_admin(message: types.Message):
+
+    if message.from_user.id == ADMIN_ID:
+        return
+
+
+    await message.bot.send_message(
+        ADMIN_ID,
+        f"""
+📩 پیام جدید پشتیبانی
+
+👤 کاربر:
+{message.from_user.full_name}
+
+🆔 آیدی:
+{message.from_user.id}
+
+
+💬 پیام:
+{message.text}
+"""
+    )
+
+
+    await message.answer(
+        "✅ پیام شما برای پشتیبانی ارسال شد."
     )
