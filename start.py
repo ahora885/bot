@@ -2,7 +2,9 @@ from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-from database import Session, User
+from sqlalchemy import select
+
+from database import AsyncSessionLocal, User
 from config import WELCOME_BONUS
 
 
@@ -30,40 +32,41 @@ main_menu = ReplyKeyboardMarkup(
 @router.message(Command("start"))
 async def start_handler(message: types.Message):
 
-    db = Session()
+    async with AsyncSessionLocal() as session:
 
-    user = db.query(User).filter(
-        User.telegram_id == message.from_user.id
-    ).first()
-
-
-    if not user:
-
-        user = User(
-            telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            wallet=WELCOME_BONUS,
-            welcome_bonus=True
+        result = await session.execute(
+            select(User).where(
+                User.telegram_id == message.from_user.id
+            )
         )
 
-        db.add(user)
-        db.commit()
+        user = result.scalar_one_or_none()
 
 
-        await message.answer(
-            "🎉 خوش آمدید!\n\n"
-            "💰 مبلغ ۲۰ هزار تومان هدیه ورود به کیف پول شما اضافه شد.",
-            reply_markup=main_menu
-        )
+        if not user:
+
+            user = User(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                wallet=WELCOME_BONUS,
+                welcome_bonus=True
+            )
+
+            session.add(user)
+
+            await session.commit()
 
 
-    else:
+            await message.answer(
+                "🎉 خوش آمدید!\n\n"
+                "💰 مبلغ ۲۰ هزار تومان هدیه ورود به کیف پول شما اضافه شد.",
+                reply_markup=main_menu
+            )
 
-        await message.answer(
-            "👋 خوش آمدید دوباره!",
-            reply_markup=main_menu
-        )
+        else:
 
-
-    db.close()
+            await message.answer(
+                "👋 خوش آمدید دوباره!",
+                reply_markup=main_menu
+            )
