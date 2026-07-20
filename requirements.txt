@@ -1,5 +1,3 @@
-pyTelegramBotAPI
-openai
-numpy
-faiss-cpu
-flask
+aiogram==3.4.1
+python-dotenv
+sqlalchemy
